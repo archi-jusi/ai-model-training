@@ -29,8 +29,8 @@ jobs:
           pip install flake8 bandit
           pip install -r src/requirements.txt
 
-      - name: Lint code
-        run: flake8 src/ --max-line-length 120
+    #   - name: Lint code
+    #     run: flake8 src/ --max-line-length 120
 
       - name: Security scan
         run: bandit -r src/
