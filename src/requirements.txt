@@ -1,0 +1,17 @@
+# For S3/MinIO access
+boto3>=1.30.0
+
+# Core ML and LLM training
+torch>=2.1.0
+transformers>=4.38.0
+datasets>=2.13.0  # optional, for dataset handling
+
+# PDF/EPUB processing
+PyPDF2>=3.0.0
+ebooklib>=0.18.1
+
+# Environment variable support (if you want .env files)
+python-dotenv>=1.0.0
+
+# Optional utilities
+tqdm>=4.66.0  # for progress bars
