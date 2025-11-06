@@ -1,9 +1,14 @@
 import os
-import io
 import json
 import boto3
 from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments, TextDataset, DataCollatorForLanguageModeling
-from botocore.exceptions import ClientError
+import time
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    PartialCredentialsError,
+)
 
 # MinIO environment variables
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
@@ -13,14 +18,52 @@ DATASET_BUCKET = os.getenv("DATASET_BUCKET", "dataset")
 MODEL_BUCKET = os.getenv("MODEL_BUCKET", "models")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt2_finetuned")
 
-# Connect to MinIO
-def create_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=MINIO_ENDPOINT,
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=MINIO_SECRET_KEY
-    )
+def create_s3_client(max_retries=5, retry_delay=5):
+    """
+    Initialize the S3 (MinIO) client with retries if the service is not yet ready.
+    """
+    endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:3000")
+    access_key = os.getenv("MINIO_ACCESS_KEY")
+    secret_key = os.getenv("MINIO_SECRET_KEY")
+
+    print(f"[INFO] Connecting to MinIO endpoint: {endpoint}")
+    print("MINIO_ENDPOINT =", os.getenv("MINIO_ENDPOINT"))
+    print("MINIO_ACCESS_KEY =", os.getenv("MINIO_ACCESS_KEY"))
+    print("MINIO_SECRET_KEY =", "***" if os.getenv("MINIO_SECRET_KEY") else None)
+
+    if not access_key or not secret_key:
+        print("[ERROR] Missing MINIO_ACCESS_KEY or MINIO_SECRET_KEY env var.")
+        return None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
+
+            # Quick health check
+            s3.list_buckets()
+            print("[SUCCESS] Successfully connected to MinIO and verified credentials.")
+            return s3
+
+        except EndpointConnectionError as e:
+            print(f"[WARN] Attempt Cannot connect to MinIO endpoint: {e}")
+        except (NoCredentialsError, PartialCredentialsError):
+            print("[ERROR] Invalid or missing credentials for MinIO.")
+            break
+        except ClientError as e:
+            print(f"[ERROR] MinIO client error: {e}")
+            break
+        except Exception as e:
+            print(f"[ERROR] Unexpected error while connecting to MinIO: {e}")
+
+        time.sleep(retry_delay)
+
+    print("[FATAL] Failed to connect to MinIO after multiple attempts.")
+    return None
 
 def download_dataset(s3_client, dataset_file="dataset.json"):
     obj = s3_client.get_object(Bucket=DATASET_BUCKET, Key=dataset_file)
