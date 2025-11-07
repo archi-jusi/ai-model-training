@@ -48,6 +48,12 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Set up Java 17 for SonarCloud
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
       
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v1
