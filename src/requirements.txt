@@ -1,5 +1,5 @@
 # For S3/MinIO access
-boto3>=1.30.0
+boto3>=1.23.10
 
 # Core ML and LLM training - include in the base image
 #torch>=2.1.0
