@@ -39,8 +39,8 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@v1
         with:
             args: >
-            -Dsonar.projectKey=ai-model-training
-            -Dsonar.organization=Archi-jusi
+                -Dsonar.projectKey=ai-model-training
+                -Dsonar.organization=Archi-jusi
         env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: Log in to Docker Hub
