@@ -1,4 +1,4 @@
-name: Build and Deploy Model Trainer
+name: Build and Deploy Book Model Trainer
 
 on:
   push:
@@ -12,7 +12,6 @@ env:
   MANIFEST_FILE: K8S/AI/ai-model-train-job/values.yaml
   PYTHON_VERSION: "3.10"
   ALLOW_BANDIT_FAILURE: true
-
 
 jobs:
   build-test-deploy:
