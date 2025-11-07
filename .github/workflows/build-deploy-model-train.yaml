@@ -49,9 +49,9 @@ jobs:
             fi
           fi
       
-       - name: Run SonarCloud in Docker
+      - name: Run SonarCloud in Docker
         run: |
-          docker run --rm \
+            docker run --rm \
             -e SONAR_TOKEN=${{ secrets.SONAR_TOKEN }} \
             -v "$(pwd)":/usr/src \
             sonarsource/sonar-scanner-cli:5.0.1 \
