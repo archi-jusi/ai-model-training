@@ -1,5 +1,5 @@
 # Use an ARM64-compatible Python base image
-FROM python:3.10-slim
+FROM huggingface/transformers-pytorch-cpu:latest
 
 # Set environment variables for Python
 ENV PYTHONDONTWRITEBYTECODE=1 \

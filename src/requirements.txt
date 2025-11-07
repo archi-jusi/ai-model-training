@@ -1,9 +1,10 @@
 # For S3/MinIO access
 boto3>=1.30.0
 
-# Core ML and LLM training
-torch>=2.1.0
-transformers>=4.38.0
+# Core ML and LLM training - include in the base image
+#torch>=2.1.0
+#transformers>=4.38.0
+
 datasets>=2.13.0  # optional, for dataset handling
 
 # PDF/EPUB processing
