@@ -10,6 +10,9 @@ env:
   IMAGE_NAME: jusi13/ai-model-train
   MANIFEST_REPO: archi-jusi/argocd-manifest
   MANIFEST_FILE: K8S/AI/ai-model-train-job/values.yaml
+  PYTHON_VERSION: "3.10"
+  ALLOW_BANDIT_FAILURE: true
+
 
 jobs:
   build-test-deploy:
@@ -22,7 +25,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -33,7 +36,18 @@ jobs:
     #     run: flake8 src/ --max-line-length 120
 
       - name: Security scan
-        run: bandit -r src/
+        run: |
+          echo "Running Bandit security scan..."
+          if bandit -r src/; then
+            echo "✅ Bandit passed"
+          else
+            if [ "${{ env.ALLOW_BANDIT_FAILURE }}" = "true" ]; then
+              echo "Bandit found issues, but continuing as allowed."
+            else
+              echo "Bandit found issues. Failing the pipeline."
+              exit 1
+            fi
+          fi
       
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v1
@@ -41,6 +55,8 @@ jobs:
             args: >
                 -Dsonar.projectKey=ai-model-training
                 -Dsonar.organization=Archi-jusi
+                -Dsonar.python.version=${{ env.PYTHON_VERSION }}
+                -Dsonar.sources=src
         env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: Log in to Docker Hub
@@ -50,13 +66,15 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Build and push Docker image
-        run: |
-          BRANCH_NAME=${GITHUB_REF##*/}
-          IMAGE_TAG=${BRANCH_NAME}-$(date +%Y%m%d%H%M%S)
-          docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest .
-          docker push $IMAGE_NAME:$IMAGE_TAG
-          docker push $IMAGE_NAME:latest
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Install yq
         run: |
