@@ -86,8 +86,8 @@ jobs:
             tags: |
                 ${{ env.IMAGE_NAME }}:latest
                 ${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ github.run_number }}
-                cache-from: type=gha
-                cache-to: type=gha,mode=max
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
 
       - name: Install yq
         run: |
