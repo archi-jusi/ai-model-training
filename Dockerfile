@@ -5,7 +5,6 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -19,18 +18,14 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
 RUN pip install --upgrade pip
 
-# Set work directory
 WORKDIR /app
 
-# Copy project files
 COPY pyproject.toml /app/
 COPY src/ /app/src/
 
-# Install dependencies from requirements.txt
-RUN pip install -r requirements.txt
+RUN pip install -r src/requirements.txt
 
 # Set default command
 CMD ["python3", "src/main.py"]
