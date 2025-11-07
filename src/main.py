@@ -10,6 +10,8 @@ from botocore.exceptions import (
     PartialCredentialsError,
 )
 
+MODEL_OUTPUT_DIR = "./gpt2_model"
+
 # MinIO environment variables
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
@@ -92,7 +94,7 @@ def train_gpt2(dataset_file):
     )
 
     training_args = TrainingArguments(
-        output_dir="./gpt2_model",
+        output_dir=MODEL_OUTPUT_DIR,
         overwrite_output_dir=True,
         num_train_epochs=1,
         per_device_train_batch_size=2,
@@ -109,8 +111,8 @@ def train_gpt2(dataset_file):
     )
 
     trainer.train()
-    trainer.save_model("./gpt2_model")
-    return "./gpt2_model"
+    trainer.save_model(MODEL_OUTPUT_DIR)
+    return MODEL_OUTPUT_DIR
 
 def upload_model_to_minio(s3_client, local_dir, model_name):
     import os
@@ -130,4 +132,4 @@ def main():
     upload_model_to_minio(s3, local_model_dir, MODEL_NAME)
 
 if __name__ == "__main__":
-    main()
+    main()  
