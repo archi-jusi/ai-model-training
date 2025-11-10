@@ -7,7 +7,7 @@ on:
   pull_request:
 
 env:
-  IMAGE_NAME: jusi13/ai-model-train
+  IMAGE_NAME: jusi13/ai-model-training
   MANIFEST_REPO: archi-jusi/argocd-manifest
   MANIFEST_FILE: K8S/AI/ai-model-training/helm/values.yaml
   PYTHON_VERSION: "3.10"
