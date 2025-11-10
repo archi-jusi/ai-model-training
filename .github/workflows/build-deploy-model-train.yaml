@@ -11,7 +11,7 @@ env:
   MANIFEST_REPO: archi-jusi/argocd-manifest
   MANIFEST_FILE: K8S/AI/ai-model-train-job/values.yaml
   PYTHON_VERSION: "3.10"
-  ALLOW_BANDIT_FAILURE: true
+  TRIVY_IGNORE_UNFIXED: true
 
 jobs:
   build-test-deploy:
@@ -25,39 +25,45 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-     
+
       - name: Cache Python packages
         uses: actions/cache@v3
         with:
-            path: ~/.cache/pip
-            key: ${{ runner.os }}-pip-${{ hashFiles('src/requirements.txt') }}
-            restore-keys: |
-                "${{ runner.os }}-pip"
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('src/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip
+
       - name: Install dependencies
         run: |
-          pip install flake8 bandit
+          pip install flake8
           pip install -r src/requirements.txt
 
-    #   - name: Lint code
-    #     run: flake8 src/ --max-line-length 120
-
-      - name: Security scan
+      - name: Install Trivy
         run: |
-          echo "Running Bandit security scan..."
-          if bandit -r src/; then
-            echo "✅ Bandit passed"
+          sudo apt-get update -y
+          sudo apt-get install -y trivy
+    
+      - name: Determine Trivy flags
+        id: trivy-flags
+        run: |
+          if [ "${{ env.TRIVY_IGNORE_UNFIXED }}" = "true" ]; then
+            echo "flags=--ignore-unfixed" >> $GITHUB_OUTPUT
           else
-            if [ "${{ env.ALLOW_BANDIT_FAILURE }}" = "true" ]; then
-              echo "Bandit found issues, but continuing as allowed."
-            else
-              echo "Bandit found issues. Failing the pipeline."
-              exit 1
-            fi
+            echo "flags=" >> $GITHUB_OUTPUT
           fi
-      
+      - name: Trivy File System (dependencies) Scan
+        run: |
+          echo "Running Trivy filesystem scan..."
+          trivy fs \
+            --scanners vuln,secret,config \
+            --severity HIGH,CRITICAL \
+            ${{ steps.trivy-flags.outputs.flags }} \
+            --exit-code 1 src/ || true
+
       - name: Run SonarCloud in Docker
         run: |
-            docker run --rm \
+          docker run --rm \
             -e SONAR_TOKEN=${{ secrets.SONAR_TOKEN }} \
             -v "$(pwd)":/usr/src \
             sonarsource/sonar-scanner-cli:5.0.1 \
@@ -66,6 +72,7 @@ jobs:
             -Dsonar.sources=src \
             -Dsonar.python.version=${{ env.PYTHON_VERSION }} \
             -Dsonar.host.url=https://sonarcloud.io
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -75,19 +82,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-            buildkitd-flags: --debug
-            driver-opts: network=host
+          buildkitd-flags: --debug
+          driver-opts: network=host
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-            context: .
-            push: true
-            tags: |
-                ${{ env.IMAGE_NAME }}:latest
-                ${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ github.run_number }}
-            cache-from: type=gha
-            cache-to: type=gha,mode=max
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy Docker Image Scan
+        run: |
+          echo "🔍 Running Trivy image scan..."
+          trivy image --severity HIGH,CRITICAL --exit-code 1 ${{ env.IMAGE_NAME }}:latest || true
 
       - name: Install yq
         run: |

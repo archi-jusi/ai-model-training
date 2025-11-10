@@ -12,4 +12,4 @@ PyPDF2>=3.0.0
 ebooklib>=0.18.1
 
 # Environment variable support (if you want .env files)
-python-dotenv>=1.0.0
+python-dotenv>=0.20.0
