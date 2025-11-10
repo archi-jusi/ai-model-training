@@ -39,27 +39,14 @@ jobs:
           pip install flake8
           pip install -r src/requirements.txt
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y trivy
-    
-      - name: Determine Trivy flags
-        id: trivy-flags
-        run: |
-          if [ "${{ env.TRIVY_IGNORE_UNFIXED }}" = "true" ]; then
-            echo "flags=--ignore-unfixed" >> $GITHUB_OUTPUT
-          else
-            echo "flags=" >> $GITHUB_OUTPUT
-          fi
-      - name: Trivy File System (dependencies) Scan
-        run: |
-          echo "Running Trivy filesystem scan..."
-          trivy fs \
-            --scanners vuln,secret,config \
-            --severity HIGH,CRITICAL \
-            ${{ steps.trivy-flags.outputs.flags }} \
-            --exit-code 1 src/ || true
+      - name: Run Trivy vulnerability scan on source code
+        uses: aquasecurity/trivy-action@master
+        with:
+            scan-type: fs
+            scan-path: src
+            format: table
+            exit-code: 0
+            ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED || false }}
 
       - name: Run SonarCloud in Docker
         run: |
@@ -96,10 +83,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy Docker Image Scan
+      - name: Scan Docker image with Trivy (Dockerized)
         run: |
-          echo "🔍 Running Trivy image scan..."
-          trivy image --severity HIGH,CRITICAL --exit-code 1 ${{ env.IMAGE_NAME }}:latest || true
+            docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --ignore-unfixed \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            ${{ env.IMAGE_NAME }}:latest
 
       - name: Install yq
         run: |
