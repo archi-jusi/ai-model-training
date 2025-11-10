@@ -9,7 +9,7 @@ on:
 env:
   IMAGE_NAME: jusi13/ai-model-train
   MANIFEST_REPO: archi-jusi/argocd-manifest
-  MANIFEST_FILE: K8S/AI/ai-model-train-job/values.yaml
+  MANIFEST_FILE: K8S/AI/ai-model-training/helm/values.yaml
   PYTHON_VERSION: "3.10"
   TRIVY_IGNORE_UNFIXED: true
 
