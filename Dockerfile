@@ -1,9 +1,8 @@
-FROM python:3.10-slim AS builder
+FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -20,24 +19,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY src/requirements.txt /app/
-
 RUN pip install --upgrade pip \
- && pip install --prefix=/install -r /app/requirements.txt
+ && pip install -r /app/requirements.txt
 
-
-FROM python:3.10-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-WORKDIR /app
-
-# Copy installed packages from builder
-COPY --from=builder /usr/local /usr/local
-
-# Copy application code
 COPY pyproject.toml /app/
 COPY src/ /app/src/
 
-# Default command
 CMD ["python3", "src/main.py"]
