@@ -1,5 +1,4 @@
-FROM huggingface/transformers-pytorch-cpu:latest
-
+FROM pytorch/pytorch:2.4.0-cpu
 # Set environment variables for Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
