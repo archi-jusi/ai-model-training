@@ -87,7 +87,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Scan Docker image with Trivy (Dockerized)
+      - name: Scan Docker image with Trivy 
         run: |
             docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -95,6 +95,7 @@ jobs:
             --ignore-unfixed \
             --exit-code 0 \
             --severity HIGH,CRITICAL \
+            --platform linux/arm64 \
             ${{ env.IMAGE_NAME }}:latest
 
       - name: Install yq
