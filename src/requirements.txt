@@ -1,11 +1,8 @@
 # For S3/MinIO access
 boto3>=1.23.10
 
-# Core ML and LLM training - include in the base image
-#torch>=2.1.0
-#transformers>=4.38.0
 
-datasets>= 2.4.0 
+datasets>=2.4.0 
 
 # PDF/EPUB processing
 PyPDF2>=3.0.0
@@ -14,4 +11,5 @@ ebooklib>=0.18.1
 # Environment variable support (if you want .env files)
 python-dotenv>=0.20.0
 
+torch==2.4.0+cpu
 transformers>=4.38.0
