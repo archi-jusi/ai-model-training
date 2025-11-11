@@ -11,5 +11,5 @@ ebooklib>=0.18.1
 # Environment variable support (if you want .env files)
 python-dotenv>=0.20.0
 
-torch==2.4.0+cpu
+torch==2.4.0
 transformers>=4.38.0
