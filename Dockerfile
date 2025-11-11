@@ -1,4 +1,3 @@
-# Use an ARM64-compatible Python base image
 FROM huggingface/transformers-pytorch-cpu:latest
 
 # Set environment variables for Python
