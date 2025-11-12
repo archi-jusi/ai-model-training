@@ -1,6 +1,8 @@
 import os
 import json
 import boto3
+import tarfile
+from datetime import datetime
 from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments, TextDataset, DataCollatorForLanguageModeling
 import time
 from botocore.exceptions import (
@@ -100,7 +102,9 @@ def train_gpt2(dataset_file):
         per_device_train_batch_size=2,
         save_steps=500,
         save_total_limit=2,
-        logging_steps=100,
+        logging_steps=10,
+        report_to="none",
+        save_strategy="no",
     )
 
     trainer = Trainer(
@@ -114,22 +118,39 @@ def train_gpt2(dataset_file):
     trainer.save_model(MODEL_OUTPUT_DIR)
     return MODEL_OUTPUT_DIR
 
-def upload_model_to_minio(s3_client, local_dir, model_name):
-    import os
-    for root, _, files in os.walk(local_dir):
-        for file in files:
-            file_path = os.path.join(root, file)
-            s3_key = os.path.join(model_name, os.path.relpath(file_path, local_dir))
-            with open(file_path, "rb") as f:
-                s3_client.put_object(Bucket=MODEL_BUCKET, Key=s3_key, Body=f)
-    print(f"[SUCCESS] Model uploaded to MinIO under {MODEL_BUCKET}/{model_name}")
+# New function: save model to tarball with date and checkpoint
+def create_tarball(model_dir: str) -> str:
+    # Get last checkpoint folder if exists
+    checkpoint_dirs = [d for d in os.listdir(model_dir) if d.startswith("checkpoint")]
+    last_checkpoint = sorted(checkpoint_dirs, key=lambda x: int(x.split("-")[1]))[-1] if checkpoint_dirs else "final"
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    tar_filename = os.path.join(model_dir, f"{MODEL_NAME}_{date_str}_{last_checkpoint}.tar.gz")
+
+    with tarfile.open(tar_filename, "w:gz") as tar:
+        # Only include files needed for inference
+        for f in ["config.json", "model.safetensors", "merges.txt", "tokenizer_config.json", "special_tokens_map.json"]:
+            path = os.path.join(model_dir, f)
+            if os.path.exists(path):
+                tar.add(path, arcname=f)
+
+    print(f"[INFO] Model saved as tarball: {tar_filename}")
+    return tar_filename
+
+# Upload tarball to MinIO
+def upload_model_tar_to_minio(s3_client, tar_path):
+    key = os.path.basename(tar_path)
+    with open(tar_path, "rb") as f:
+        s3_client.put_object(Bucket=MODEL_BUCKET, Key=key, Body=f)
+    print(f"[SUCCESS] Tarball uploaded to MinIO: {MODEL_BUCKET}/{key}")
 
 def main():
     s3 = create_s3_client()
     data = download_dataset(s3)
     dataset_txt = save_dataset_txt(data)
     local_model_dir = train_gpt2(dataset_txt)
-    upload_model_to_minio(s3, local_model_dir, MODEL_NAME)
+    tar_path = create_tarball(local_model_dir)
+    upload_model_tar_to_minio(s3, tar_path)
 
 if __name__ == "__main__":
-    main()  
+    main()
