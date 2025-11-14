@@ -11,6 +11,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
+    GPT2TokenizerFast,
 )
 from botocore.exceptions import (
     ClientError,
@@ -71,37 +72,40 @@ def download_dataset(s3_client, dataset_file="dataset.json"):
 # Modern Dataset Pipeline
 # -------------------------
 def preprocess_dataset(data, tokenizer, block_size=128):
-
     print("[INFO] Preprocessing dataset with HuggingFace Datasets...")
 
-    # Convert to HF dataset
-    texts = [item["text"].replace("\n", " ") for item in data]
-    dataset = Dataset.from_dict({"text": texts})
+    # Convert list of texts → Dataset
+    dataset = Dataset.from_list([{"text": item["text"]} for item in data])
 
-    # Tokenize entire dataset
-    def tokenize(batch):
-        return tokenizer(batch["text"], truncation=True)
+    # Step 1: tokenize
+    def tokenize_fn(example):
+        return tokenizer(example["text"])
+    
+    dataset = dataset.map(
+        tokenize_fn,
+        batched=True,
+        remove_columns=["text"]
+    )
 
-    dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])
-
-    # Group into fixed-size blocks for LM
+    # Step 2: concatenate & split into blocks
     def group_texts(examples):
-        concatenated = sum(examples["input_ids"], [])
-        total_length = (len(concatenated) // block_size) * block_size
+        # concatenate all token lists
+        concatenated = {k: sum(examples[k], []) for k in examples}
+        total_length = len(concatenated["input_ids"])
+
+        # truncate to nearest block
+        total_length = (total_length // block_size) * block_size
+
         result = {
-            "input_ids": [
-                concatenated[i : i + block_size]
-                for i in range(0, total_length, block_size)
-            ]
+            k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
+            for k, t in concatenated.items()
         }
-        result["labels"] = result["input_ids"].copy()
         return result
 
     dataset = dataset.map(group_texts, batched=True)
 
-    print(f"[INFO] Final dataset size: {len(dataset)} blocks")
+    print("[INFO] Dataset ready for training.")
     return dataset
-
 
 # -------------------------
 # Training
