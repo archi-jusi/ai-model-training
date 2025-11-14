@@ -2,9 +2,16 @@ import os
 import json
 import boto3
 import tarfile
-from datetime import datetime
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments, TextDataset, DataCollatorForLanguageModeling
 import time
+from datetime import datetime
+from datasets import Dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+)
 from botocore.exceptions import (
     ClientError,
     EndpointConnectionError,
@@ -12,156 +19,181 @@ from botocore.exceptions import (
     PartialCredentialsError,
 )
 
-MODEL_OUTPUT_DIR = "./gpt2_model"
+MODEL_OUTPUT_DIR = "./model_output"
 
-# MinIO environment variables
+# Environment Variables
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
 DATASET_BUCKET = os.getenv("DATASET_BUCKET", "dataset")
 MODEL_BUCKET = os.getenv("MODEL_BUCKET", "models")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt2_finetuned")
+MODEL_NAME = os.getenv("MODEL_NAME", "distilgpt2_finetuned")
 
+# -------------------------
+# MinIO Client
+# -------------------------
 def create_s3_client(max_retries=5, retry_delay=5):
-    """
-    Initialize the S3 (MinIO) client with retries if the service is not yet ready.
-    """
-    endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:3000")
-    access_key = os.getenv("MINIO_ACCESS_KEY")
-    secret_key = os.getenv("MINIO_SECRET_KEY")
 
-    print(f"[INFO] Connecting to MinIO endpoint: {endpoint}")
-    print("MINIO_ENDPOINT =", os.getenv("MINIO_ENDPOINT"))
-    print("MINIO_ACCESS_KEY =", os.getenv("MINIO_ACCESS_KEY"))
-    print("MINIO_SECRET_KEY =", "***" if os.getenv("MINIO_SECRET_KEY") else None)
+    endpoint = MINIO_ENDPOINT or "http://localhost:3000"
 
-    if not access_key or not secret_key:
-        print("[ERROR] Missing MINIO_ACCESS_KEY or MINIO_SECRET_KEY env var.")
-        return None
+    print(f"[INFO] Connecting to MinIO at {endpoint}")
+    print("MINIO_ACCESS_KEY =", MINIO_ACCESS_KEY)
+    print("MINIO_SECRET_KEY =", "***")
 
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(max_retries):
         try:
             s3 = boto3.client(
                 "s3",
                 endpoint_url=endpoint,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
+                aws_access_key_id=MINIO_ACCESS_KEY,
+                aws_secret_access_key=MINIO_SECRET_KEY,
             )
-
-            # Quick health check
             s3.list_buckets()
-            print("[SUCCESS] Successfully connected to MinIO and verified credentials.")
+            print("[SUCCESS] Connected to MinIO!")
             return s3
-
-        except EndpointConnectionError as e:
-            print(f"[WARN] Attempt Cannot connect to MinIO endpoint: {e}")
-        except (NoCredentialsError, PartialCredentialsError):
-            print("[ERROR] Invalid or missing credentials for MinIO.")
-            break
-        except ClientError as e:
-            print(f"[ERROR] MinIO client error: {e}")
-            break
         except Exception as e:
-            print(f"[ERROR] Unexpected error while connecting to MinIO: {e}")
+            print(f"[WARN] MinIO not ready ({attempt+1}/{max_retries}): {e}")
+            time.sleep(retry_delay)
 
-        time.sleep(retry_delay)
-
-    print("[FATAL] Failed to connect to MinIO after multiple attempts.")
+    print("[FATAL] Failed to connect to MinIO.")
     return None
 
+
 def download_dataset(s3_client, dataset_file="dataset.json"):
+    print("[INFO] Downloading dataset from MinIO...")
     obj = s3_client.get_object(Bucket=DATASET_BUCKET, Key=dataset_file)
-    return json.loads(obj["Body"].read().decode("utf-8"))
+    data = json.loads(obj["Body"].read().decode("utf-8"))
+    print(f"[INFO] Loaded {len(data)} items.")
+    return data
 
-# Save dataset locally for HuggingFace
-def save_dataset_txt(data, file_path="dataset.txt"):
-    with open(file_path, "w", encoding="utf-8") as f:
-        for item in data:
-            f.write(item["text"].replace("\n", " ") + "\n")
-    return file_path
 
-def train_gpt2(dataset_file):
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    model = GPT2LMHeadModel.from_pretrained("gpt2")
+# -------------------------
+# Modern Dataset Pipeline
+# -------------------------
+def preprocess_dataset(data, tokenizer, block_size=128):
 
-    train_dataset = TextDataset(
-        tokenizer=tokenizer,
-        file_path=dataset_file,
-        block_size=128,
-    )
+    print("[INFO] Preprocessing dataset with HuggingFace Datasets...")
 
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False
-    )
+    # Convert to HF dataset
+    texts = [item["text"].replace("\n", " ") for item in data]
+    dataset = Dataset.from_dict({"text": texts})
+
+    # Tokenize entire dataset
+    def tokenize(batch):
+        return tokenizer(batch["text"], truncation=True)
+
+    dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])
+
+    # Group into fixed-size blocks for LM
+    def group_texts(examples):
+        concatenated = sum(examples["input_ids"], [])
+        total_length = (len(concatenated) // block_size) * block_size
+        result = {
+            "input_ids": [
+                concatenated[i : i + block_size]
+                for i in range(0, total_length, block_size)
+            ]
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    dataset = dataset.map(group_texts, batched=True)
+
+    print(f"[INFO] Final dataset size: {len(dataset)} blocks")
+    return dataset
+
+
+# -------------------------
+# Training
+# -------------------------
+def train_model(data):
+
+    print("[INFO] Loading tokenizer & model: distilgpt2")
+    tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
+    model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+
+    dataset = preprocess_dataset(data, tokenizer)
+
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(
         output_dir=MODEL_OUTPUT_DIR,
         overwrite_output_dir=True,
         num_train_epochs=1,
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=2,
+        warmup_steps=20,
         logging_steps=10,
-        report_to="none",
         save_strategy="no",
+        report_to="none",
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
+        train_dataset=dataset,
         data_collator=data_collator,
-        train_dataset=train_dataset
     )
 
+    print("[INFO] Starting training...")
     trainer.train()
 
-    # Save model + tokenizer
+    print("[INFO] Saving model...")
     trainer.save_model(MODEL_OUTPUT_DIR)
     tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
 
     return MODEL_OUTPUT_DIR
 
-def create_tarball(model_dir: str) -> str:
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    tar_filename = os.path.join(
-        model_dir, f"{MODEL_NAME}_{date_str}_final.tar.gz"
-    )
 
-    required_files = [
+# -------------------------
+# Tarball Creation
+# -------------------------
+def create_tarball(model_dir: str) -> str:
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    tar_filename = os.path.join(model_dir, f"{MODEL_NAME}_{date_str}.tar.gz")
+
+    required = [
         "config.json",
         "model.safetensors",
-        "vocab.json",             
+        "tokenizer.json",
         "merges.txt",
+        "vocab.json",
         "tokenizer_config.json",
         "special_tokens_map.json",
     ]
 
     with tarfile.open(tar_filename, "w:gz") as tar:
-        for fname in required_files:
-            path = os.path.join(model_dir, fname)
+        for f in required:
+            path = os.path.join(model_dir, f)
             if os.path.exists(path):
-                tar.add(path, arcname=fname)
+                tar.add(path, arcname=f)
             else:
-                print(f"[WARN] Missing file in model dir: {fname}")
+                print(f"[WARN] Missing {f}")
 
-    print(f"[INFO] Model tarball created: {tar_filename}")
+    print(f"[INFO] Created model tarball: {tar_filename}")
     return tar_filename
 
 
-
-# Upload tarball to MinIO
-def upload_model_tar_to_minio(s3_client, tar_path):
+def upload_model_tar(s3_client, tar_path):
     key = os.path.basename(tar_path)
-    with open(tar_path, "rb") as f:
-        s3_client.put_object(Bucket=MODEL_BUCKET, Key=key, Body=f)
-    print(f"[SUCCESS] Tarball uploaded to MinIO: {MODEL_BUCKET}/{key}")
+    s3_client.upload_file(tar_path, MODEL_BUCKET, key)
+    print(f"[SUCCESS] Uploaded model to MinIO: {MODEL_BUCKET}/{key}")
 
+
+# -------------------------
+# Main
+# -------------------------
 def main():
     s3 = create_s3_client()
+    if not s3:
+        return
+
     data = download_dataset(s3)
-    dataset_txt = save_dataset_txt(data)
-    local_model_dir = train_gpt2(dataset_txt)
-    tar_path = create_tarball(local_model_dir)
-    upload_model_tar_to_minio(s3, tar_path)
+    model_dir = train_model(data)
+    tar_path = create_tarball(model_dir)
+    upload_model_tar(s3, tar_path)
+
 
 if __name__ == "__main__":
     main()
