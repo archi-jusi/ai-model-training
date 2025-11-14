@@ -80,7 +80,6 @@ def save_dataset_txt(data, file_path="dataset.txt"):
             f.write(item["text"].replace("\n", " ") + "\n")
     return file_path
 
-# Train GPT-2 on your dataset
 def train_gpt2(dataset_file):
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     model = GPT2LMHeadModel.from_pretrained("gpt2")
@@ -88,8 +87,9 @@ def train_gpt2(dataset_file):
     train_dataset = TextDataset(
         tokenizer=tokenizer,
         file_path=dataset_file,
-        block_size=128
+        block_size=128,
     )
+
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False
@@ -100,8 +100,6 @@ def train_gpt2(dataset_file):
         overwrite_output_dir=True,
         num_train_epochs=1,
         per_device_train_batch_size=2,
-        save_steps=500,
-        save_total_limit=2,
         logging_steps=10,
         report_to="none",
         save_strategy="no",
@@ -115,27 +113,40 @@ def train_gpt2(dataset_file):
     )
 
     trainer.train()
+
+    # Save model + tokenizer
     trainer.save_model(MODEL_OUTPUT_DIR)
+    tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
+
     return MODEL_OUTPUT_DIR
 
-# New function: save model to tarball with date and checkpoint
 def create_tarball(model_dir: str) -> str:
-    # Get last checkpoint folder if exists
-    checkpoint_dirs = [d for d in os.listdir(model_dir) if d.startswith("checkpoint")]
-    last_checkpoint = sorted(checkpoint_dirs, key=lambda x: int(x.split("-")[1]))[-1] if checkpoint_dirs else "final"
-
     date_str = datetime.now().strftime("%Y-%m-%d")
-    tar_filename = os.path.join(model_dir, f"{MODEL_NAME}_{date_str}_{last_checkpoint}.tar.gz")
+    tar_filename = os.path.join(
+        model_dir, f"{MODEL_NAME}_{date_str}_final.tar.gz"
+    )
+
+    required_files = [
+        "config.json",
+        "model.safetensors",
+        "vocab.json",             
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+    ]
 
     with tarfile.open(tar_filename, "w:gz") as tar:
-        # Only include files needed for inference
-        for f in ["config.json", "model.safetensors", "merges.txt", "tokenizer_config.json", "special_tokens_map.json"]:
-            path = os.path.join(model_dir, f)
+        for fname in required_files:
+            path = os.path.join(model_dir, fname)
             if os.path.exists(path):
-                tar.add(path, arcname=f)
+                tar.add(path, arcname=fname)
+            else:
+                print(f"[WARN] Missing file in model dir: {fname}")
 
-    print(f"[INFO] Model saved as tarball: {tar_filename}")
+    print(f"[INFO] Model tarball created: {tar_filename}")
     return tar_filename
+
+
 
 # Upload tarball to MinIO
 def upload_model_tar_to_minio(s3_client, tar_path):
