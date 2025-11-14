@@ -77,9 +77,14 @@ def preprocess_dataset(data, tokenizer, block_size=128):
     # Convert list of texts → Dataset
     dataset = Dataset.from_list([{"text": item["text"]} for item in data])
 
-    # Step 1: tokenize
-    def tokenize_fn(example):
-        return tokenizer(example["text"])
+    # TOKENIZE WITH TRUNCATION + RETURN TENSORS
+    def tokenize_fn(examples):
+        return tokenizer(
+            examples["text"],
+            truncation=True,
+            max_length=block_size,
+            padding="max_length"   # <-- IMPORTANT FIX
+        )
     
     dataset = dataset.map(
         tokenize_fn,
@@ -87,22 +92,12 @@ def preprocess_dataset(data, tokenizer, block_size=128):
         remove_columns=["text"]
     )
 
-    # Step 2: concatenate & split into blocks
-    def group_texts(examples):
-        # concatenate all token lists
-        concatenated = {k: sum(examples[k], []) for k in examples}
-        total_length = len(concatenated["input_ids"])
+    # Add labels = input_ids (causal LM requirement)
+    def add_labels(example):
+        example["labels"] = example["input_ids"]
+        return example
 
-        # truncate to nearest block
-        total_length = (total_length // block_size) * block_size
-
-        result = {
-            k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
-            for k, t in concatenated.items()
-        }
-        return result
-
-    dataset = dataset.map(group_texts, batched=True)
+    dataset = dataset.map(add_labels)
 
     print("[INFO] Dataset ready for training.")
     return dataset
@@ -115,16 +110,24 @@ def train_model(data):
     print("[INFO] Loading tokenizer & model: distilgpt2")
     tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
     model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+    
+    # Required for GPT2 family
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = tokenizer.eos_token_id
 
     dataset = preprocess_dataset(data, tokenizer)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+    )
 
     training_args = TrainingArguments(
         output_dir=MODEL_OUTPUT_DIR,
         overwrite_output_dir=True,
         num_train_epochs=1,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=2,  # CPU friendly
         gradient_accumulation_steps=2,
         warmup_steps=20,
         logging_steps=10,
