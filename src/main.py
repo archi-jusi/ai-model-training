@@ -11,7 +11,6 @@ from transformers import (
     DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
-    GPT2TokenizerFast,
 )
 from botocore.exceptions import (
     ClientError,
@@ -60,47 +59,41 @@ def create_s3_client(max_retries=5, retry_delay=5):
     return None
 
 
+# -------------------------
+# Download dataset
+# -------------------------
 def download_dataset(s3_client, dataset_file="dataset.json"):
     print("[INFO] Downloading dataset from MinIO...")
     obj = s3_client.get_object(Bucket=DATASET_BUCKET, Key=dataset_file)
     data = json.loads(obj["Body"].read().decode("utf-8"))
-    print(f"[INFO] Loaded {len(data)} items.")
+    print(f"[INFO] Loaded {len(data)} book items.")
     return data
 
 
 # -------------------------
-# Modern Dataset Pipeline
+# Preprocessing with sliding window
 # -------------------------
-def preprocess_dataset(data, tokenizer, block_size=128):
-    print("[INFO] Preprocessing dataset with HuggingFace Datasets...")
+def preprocess_dataset(data, tokenizer, block_size=1024, stride=256):
+    print(f"[INFO] Preprocessing dataset with block_size={block_size} stride={stride}...")
 
-    # Convert list of texts → Dataset
-    dataset = Dataset.from_list([{"text": item["text"]} for item in data])
+    # Concatenate all text into one long string
+    full_text = "\n\n".join([item["text"] for item in data])
+    print(f"[INFO] Combined dataset length: {len(full_text)} characters.")
 
-    # TOKENIZE WITH TRUNCATION + RETURN TENSORS
-    def tokenize_fn(examples):
-        return tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=block_size,
-            padding="max_length"   # <-- IMPORTANT FIX
-        )
-    
-    dataset = dataset.map(
-        tokenize_fn,
-        batched=True,
-        remove_columns=["text"]
-    )
+    tokenized = tokenizer(full_text, return_attention_mask=False)
 
-    # Add labels = input_ids (causal LM requirement)
-    def add_labels(example):
-        example["labels"] = example["input_ids"]
-        return example
+    input_ids = tokenized["input_ids"]
+    print(f"[INFO] Total tokens: {len(input_ids)}")
 
-    dataset = dataset.map(add_labels)
+    # Sliding window chunking
+    chunks = []
+    for i in range(0, len(input_ids) - block_size, stride):
+        chunk = input_ids[i : i + block_size]
+        chunks.append({"input_ids": chunk, "labels": chunk.copy()})
 
-    print("[INFO] Dataset ready for training.")
-    return dataset
+    print(f"[INFO] Created {len(chunks)} training chunks.")
+    return Dataset.from_list(chunks)
+
 
 # -------------------------
 # Training
@@ -110,13 +103,18 @@ def train_model(data):
     print("[INFO] Loading tokenizer & model: distilgpt2")
     tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
     model = AutoModelForCausalLM.from_pretrained("distilgpt2")
-    
-    # Required for GPT2 family
+
+    # Ensure PAD token exists
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
 
-    dataset = preprocess_dataset(data, tokenizer)
+    dataset = preprocess_dataset(
+        data=data,
+        tokenizer=tokenizer,
+        block_size=1024,
+        stride=256
+    )
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
@@ -126,12 +124,13 @@ def train_model(data):
     training_args = TrainingArguments(
         output_dir=MODEL_OUTPUT_DIR,
         overwrite_output_dir=True,
-        num_train_epochs=1,
-        per_device_train_batch_size=2,  # CPU friendly
-        gradient_accumulation_steps=2,
-        warmup_steps=20,
+        num_train_epochs=30,               # You can change to 20 or 40
+        per_device_train_batch_size=1,    # CPU friendly
+        gradient_accumulation_steps=4,    # Effective batch of 4
+        warmup_steps=50,
         logging_steps=10,
-        save_strategy="no",
+        save_strategy="epoch",
+        save_total_limit=1,
         report_to="none",
     )
 
@@ -182,6 +181,9 @@ def create_tarball(model_dir: str) -> str:
     return tar_filename
 
 
+# -------------------------
+# Upload to MinIO
+# -------------------------
 def upload_model_tar(s3_client, tar_path):
     key = os.path.basename(tar_path)
     s3_client.upload_file(tar_path, MODEL_BUCKET, key)
