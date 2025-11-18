@@ -73,38 +73,33 @@ def download_dataset(s3_client, dataset_file="dataset.json"):
 # -------------------------
 # Preprocessing with sliding window
 # -------------------------
-def preprocess_dataset(data, tokenizer, block_size=1024, stride=256):
-    print(f"[INFO] Preprocessing dataset with block_size={block_size} stride={stride}...")
+def preprocess_dataset(data, tokenizer, block_size=256, stride=128):
+    print(f"[INFO] Preprocessing with block_size={block_size} stride={stride}")
 
-    # Concatenate all text into one long string
     full_text = "\n\n".join([item["text"] for item in data])
-    print(f"[INFO] Combined dataset length: {len(full_text)} characters.")
+    print(f"[INFO] Combined dataset length: {len(full_text)} chars")
 
     tokenized = tokenizer(full_text, return_attention_mask=False)
-
     input_ids = tokenized["input_ids"]
     print(f"[INFO] Total tokens: {len(input_ids)}")
 
-    # Sliding window chunking
     chunks = []
     for i in range(0, len(input_ids) - block_size, stride):
         chunk = input_ids[i : i + block_size]
         chunks.append({"input_ids": chunk, "labels": chunk.copy()})
 
-    print(f"[INFO] Created {len(chunks)} training chunks.")
+    print(f"[INFO] Created {len(chunks)} chunks")
     return Dataset.from_list(chunks)
-
 
 # -------------------------
 # Training
 # -------------------------
 def train_model(data):
 
-    print("[INFO] Loading tokenizer & model: distilgpt2")
+    print("[INFO] Loading model distilgpt2 (best for Mac CPU)")
     tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
     model = AutoModelForCausalLM.from_pretrained("distilgpt2")
 
-    # Ensure PAD token exists
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
@@ -112,8 +107,8 @@ def train_model(data):
     dataset = preprocess_dataset(
         data=data,
         tokenizer=tokenizer,
-        block_size=1024,
-        stride=256
+        block_size=256,
+        stride=128
     )
 
     data_collator = DataCollatorForLanguageModeling(
@@ -124,14 +119,15 @@ def train_model(data):
     training_args = TrainingArguments(
         output_dir=MODEL_OUTPUT_DIR,
         overwrite_output_dir=True,
-        num_train_epochs=30,               # You can change to 20 or 40
-        per_device_train_batch_size=1,    # CPU friendly
-        gradient_accumulation_steps=4,    # Effective batch of 4
-        warmup_steps=50,
-        logging_steps=10,
-        save_strategy="epoch",
-        save_total_limit=1,
+        num_train_epochs=3,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=2,
+        warmup_steps=20,
+        logging_steps=20,
+        save_strategy="no",
         report_to="none",
+        fp16=False,         # CPU only
+        bf16=False,
     )
 
     trainer = Trainer(
@@ -141,7 +137,7 @@ def train_model(data):
         data_collator=data_collator,
     )
 
-    print("[INFO] Starting training...")
+    print("[INFO] Starting training…")
     trainer.train()
 
     print("[INFO] Saving model...")
@@ -149,7 +145,6 @@ def train_model(data):
     tokenizer.save_pretrained(MODEL_OUTPUT_DIR)
 
     return MODEL_OUTPUT_DIR
-
 
 # -------------------------
 # Tarball Creation
